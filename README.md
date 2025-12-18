@@ -22,7 +22,6 @@ HoneyTrap/
 ├── dashboard.py        # Streamlit SIEM (Coming in Phase 2)
 └── README.md           # Documentation
 
-``` bash
 pip install flask pandas streamlit
 
 python app.py
