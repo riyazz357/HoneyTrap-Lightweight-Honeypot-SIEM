@@ -1,84 +1,80 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+import requests
 import time
 
-# --- Page Config ---
-st.set_page_config(
-    page_title="HoneyTrap SIEM",
-    page_icon="🛡️",
-    layout="wide"
-)
+st.set_page_config(page_title="HoneyTrap SIEM", page_icon="🛡️", layout="wide")
+st.title("🛡️ HoneyTrap SIEM: Global Threat Map")
 
-st.title("🛡️ HoneyTrap SIEM: Live Threat Intelligence")
-
-# --- 1. Data Fetching Function ---
+# --- 1. Data Fetching ---
 def load_data():
-    try:
-        # Connect to the database created by app.py
-        conn = sqlite3.connect('attacks.db')
-        query = "SELECT * FROM logs ORDER BY id DESC"
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    except Exception as e:
-        st.error(f"Error loading database: {e}")
-        return pd.DataFrame()
+    conn = sqlite3.connect('attacks.db')
+    df = pd.read_sql_query("SELECT * FROM logs ORDER BY id DESC", conn)
+    conn.close()
+    return df
 
-# --- 2. Load Data ---
+# --- 2. Geolocation Function (The Magic) ---
+# We cache this so we don't spam the API for the same IP twice
+@st.cache_data
+def get_location(ip):
+    if ip == "127.0.0.1" or ip == "localhost":
+        return None, None
+    try:
+        response = requests.get(f"http://ip-api.com/json/{ip}").json()
+        if response['status'] == 'success':
+            return response['lat'], response['lon']
+    except:
+        pass
+    return None, None
+
 df = load_data()
 
-if df.empty:
-    st.warning("No attacks detected yet. Waiting for traffic...")
-    st.info("Run 'python app.py' and try logging in at localhost:5000/admin")
-else:
-    # --- Data Processing (Extracting Username from Payload) ---
-    # The payload looks like: "User: admin | Pass: 123"
-    # We want just "admin" for our charts.
-    try:
-        df['username_attempted'] = df['payload'].apply(lambda x: x.split('|')[0].replace('User: ', '').strip())
-    except:
-        df['username_attempted'] = "Unknown"
-
-    # --- 3. Key Metrics (KPIs) ---
-    # Create 3 columns for top-level stats
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric(label="Total Attacks Captured", value=len(df))
+if not df.empty:
+    # --- 3. Process Map Data ---
+    # Get unique IPs to avoid looking up the same one 50 times
+    unique_ips = df['ip'].unique()
     
-    with col2:
-        unique_ips = df['ip'].nunique()
-        st.metric(label="Unique Attackers (IPs)", value=unique_ips)
+    # Create a list of locations
+    map_data = []
+    for ip in unique_ips:
+        lat, lon = get_location(ip)
+        if lat:
+            map_data.append({'lat': lat, 'lon': lon})
     
-    with col3:
-        # Show the most recent attack time
-        last_attack = df['timestamp'].iloc[0]
-        st.metric(label="Last Incident", value=last_attack.split(' ')[1]) # Just show time
+    map_df = pd.DataFrame(map_data)
+
+    # --- 4. The Dashboard Layout ---
+    
+    # ROW 1: THE MAP
+    st.subheader("🗺️ Live Attack Origins")
+    if not map_df.empty:
+        st.map(map_df, zoom=1)
+    else:
+        st.info("No external IPs detected yet (Localhost doesn't show on map).")
 
     st.markdown("---")
 
-    # --- 4. Visualizations ---
-    col_chart1, col_chart2 = st.columns(2)
-
-    with col_chart1:
-        st.subheader("🚨 Top Targeted Usernames")
-        # Count how many times each username was tried
-        username_counts = df['username_attempted'].value_counts().head(5)
-        st.bar_chart(username_counts)
-
-    with col_chart2:
-        st.subheader("🌐 Top Attacking IPs")
-        ip_counts = df['ip'].value_counts().head(5)
-        st.bar_chart(ip_counts)
-
-    # --- 5. Raw Evidence Log ---
-    st.subheader("📝 Live Intrusion Logs")
+    # ROW 2: METRICS
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Attacks", len(df))
+    c2.metric("Unique Attackers", df['ip'].nunique())
+    c3.metric("SQL Injection", len(df[df['attack_type'] == 'SQL_INJECTION']) if 'attack_type' in df.columns else 0)
     
-    # We create a cleaner view for the table
-    display_df = df[['timestamp', 'ip', 'payload','attack_type' ,'user_agent']]
-    st.dataframe(display_df, use_container_width=True)
+    # ROW 3: CHARTS
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("🚨 Attack Types")
+        if 'attack_type' in df.columns:
+            st.bar_chart(df['attack_type'].value_counts())
+    
+    with col2:
+        st.subheader("🌐 Top Attacking IPs")
+        st.bar_chart(df['ip'].value_counts().head(5))
 
-    # --- Auto-Refresh Button ---
+    # ROW 4: LOGS
+    st.subheader("📝 Intrusion Logs")
+    st.dataframe(df[['timestamp', 'ip', 'attack_type', 'payload']], use_container_width=True)
+
     if st.button('Refresh Data'):
         st.rerun()
