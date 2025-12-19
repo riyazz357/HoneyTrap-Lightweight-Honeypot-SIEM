@@ -76,7 +76,7 @@ else:
     st.subheader("📝 Live Intrusion Logs")
     
     # We create a cleaner view for the table
-    display_df = df[['timestamp', 'ip', 'payload', 'user_agent']]
+    display_df = df[['timestamp', 'ip', 'payload','attack_type' ,'user_agent']]
     st.dataframe(display_df, use_container_width=True)
 
     # --- Auto-Refresh Button ---
